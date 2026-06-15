@@ -4,8 +4,6 @@
 
 A production-style limit order book with matching engine demonstrating the core techniques used in HFT and low-latency execution systems.
 
-[![CI](https://github.com/<you>/orderbook/actions/workflows/ci.yml/badge.svg)](https://github.com/<you>/orderbook/actions)
-
 ---
 
 ## Benchmark results
