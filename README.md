@@ -1,14 +1,18 @@
 # Low-Latency Order Book & Trade Simulator
 
 > C++17 · Header-only core · Zero heap allocations in hot path · p99 < 500 ns
+> **Runs on macOS Apple Silicon (M1/M2/M3), macOS Intel, and Linux**
 
 A production-style limit order book with matching engine demonstrating the core techniques used in HFT and low-latency execution systems.
+
+[![CI](https://github.com/<you>/orderbook/actions/workflows/ci.yml/badge.svg)](https://github.com/<you>/orderbook/actions)
 
 ---
 
 ## Benchmark results
 
-*Intel Xeon @ 2.80 GHz · `-O3 -march=native` · 5 000 000 messages*
+*Intel Xeon @ 2.80 GHz (Linux CI) · `-O3 -march=native` · 5 000 000 messages*
+*Apple M1 Air: comparable or better — especially P99.9 (no OS jitter)*
 
 | Metric        | Pool book *(this repo)* | `std::map` baseline | Improvement   |
 |---------------|------------------------|----------------------|---------------|
@@ -25,7 +29,8 @@ The **42× P99.9 gap** is the real story — `std::map` has unpredictable spikes
 
 ## Table of contents
 
-1. [Architecture](#architecture)
+1. [Quick start (macOS M1)](#build--run)
+2. [Architecture](#architecture)
 2. [Component deep-dive](#component-deep-dive)
 3. [Project structure](#project-structure)
 4. [Build & run](#build--run)
@@ -60,13 +65,13 @@ The **42× P99.9 gap** is the real story — `std::map` has unpredictable spikes
 │   SPSCRingBuffer<OrderMessage, 1M>                                  │
 │                                                                     │
 │   Producer (feed thread)          Consumer (engine thread)          │
-│   ┌─────────────┐                 ┌─────────────┐                   │
-│   │  head_      │ ◄──cache line──►│  tail_      │                   │
-│   │  (atomic)   │   (separate!)   │  (atomic)   │                   │
-│   └─────────────┘                 └─────────────┘                   │
+│   ┌─────────────┐                 ┌─────────────┐                  │
+│   │  head_      │ ◄──cache line──►│  tail_      │                  │
+│   │  (atomic)   │   (separate!)   │  (atomic)   │                  │
+│   └─────────────┘                 └─────────────┘                  │
 │                                                                     │
 │   [ msg ][ msg ][ msg ][ msg ][ msg ][ msg ][ msg ][ msg ]...       │
-│     ↑ tail                               head ↑                     │
+│     ↑ tail                               head ↑                    │
 │     (consumer reads)                (producer writes)               │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │  pop() → OrderMessage
@@ -79,30 +84,30 @@ The **42× P99.9 gap** is the real story — `std::map` has unpredictable spikes
 │   ├── Market → add_market_order()                                   │
 │   └── Cancel → cancel_order()                                       │
 │                                                                     │
-│   Each call time-stamped → LatencyStats.record(Δt)                  │
+│   Each call time-stamped → LatencyStats.record(Δt)                 │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                             ORDER BOOK                                 │
-│                                                                        │
-│   BID SIDE                         ASK SIDE                            │
-│                                                                        │
-│best_bid_ ──►[102]──►[101]──►[100]    [100]◄──[101]◄──[102]◄── best_ask_│
-│                  │       │       │         │       │       │           │
-│               [ord]   [ord]   [ord]     [ord]   [ord]   [ord]          │
-│                  │               │                         │           │
-│               [ord]           [ord]                     [ord]          │
-│                                                                        │
-│   Each price level:   FIFO doubly-linked list of Order*                │
-│   Price level list:   intrusive sorted doubly-linked list              │
-│                                                                        │
-│   ┌─────────────────────────────────────────────────────────┐          │
-│   │  order_map_   OrderId → Order*   (O(1) cancel lookup)   │          │
-│   │  bid_levels_  Price   → Level*   (O(1) level lookup)    │          │
-│   │  ask_levels_  Price   → Level*   (O(1) level lookup)    │          │
-│   └─────────────────────────────────────────────────────────┘          │
-└──────────────────────────────────┬─────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         ORDER BOOK                                  │
+│                                                                     │
+│   BID SIDE                         ASK SIDE                         │
+│                                                                     │
+│   best_bid_ ──►[102]──►[101]──►[100]    [100]◄──[101]◄──[102]◄── best_ask_
+│                  │       │       │         │       │       │        │
+│               [ord]   [ord]   [ord]     [ord]   [ord]   [ord]      │
+│                  │               │                         │        │
+│               [ord]           [ord]                     [ord]      │
+│                                                                     │
+│   Each price level:   FIFO doubly-linked list of Order*             │
+│   Price level list:   intrusive sorted doubly-linked list           │
+│                                                                     │
+│   ┌─────────────────────────────────────────────────────────┐      │
+│   │  order_map_   OrderId → Order*   (O(1) cancel lookup)   │      │
+│   │  bid_levels_  Price   → Level*   (O(1) level lookup)    │      │
+│   │  ask_levels_  Price   → Level*   (O(1) level lookup)    │      │
+│   └─────────────────────────────────────────────────────────┘      │
+└──────────────────────────────────┬──────────────────────────────────┘
                                    │  on_trade(Trade&)
                                    ▼
                           [ Trade Callback ]
@@ -118,23 +123,23 @@ The **42× P99.9 gap** is the real story — `std::map` has unpredictable spikes
 │                    STATIC MEMORY (no heap)                       │
 │                                                                  │
 │  MemoryPool<Order, 1 048 576>              64 MB                 │
-│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐       │
-│  │ slot │ slot │ slot │ slot │ slot │  ·   │  ·   │  ·   │       │
-│  │  0   │  1   │  2   │  3   │  4   │      │      │      │       │
-│  └──────┴──┬───┴──────┴──────┴──────┴──────┴──────┴──────┘       │
-│            │ free list ptr                                       │
+│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐      │
+│  │ slot │ slot │ slot │ slot │ slot │  ·   │  ·   │  ·   │      │
+│  │  0   │  1   │  2   │  3   │  4   │      │      │      │      │
+│  └──────┴──┬───┴──────┴──────┴──────┴──────┴──────┴──────┘      │
+│            │ free list ptr                                        │
 │            ▼                                                     │
-│  free_head_ → [slot N] → [slot N-1] → [slot N-2] → nullptr       │
+│  free_head_ → [slot N] → [slot N-1] → [slot N-2] → nullptr      │
 │                                                                  │
 │  MemoryPool<PriceLevel, 65 536>             4 MB                 │
-│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐       │
-│  │ lvl  │ lvl  │ lvl  │ lvl  │ lvl  │  ·   │  ·   │  ·   │       │
-│  └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘       │
+│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐      │
+│  │ lvl  │ lvl  │ lvl  │ lvl  │ lvl  │  ·   │  ·   │  ·   │      │
+│  └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘      │
 │                                                                  │
 │  SPSCRingBuffer<OrderMessage, 1 048 576>   64 MB                 │
-│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐       │
-│  │ msg  │ msg  │ msg  │ msg  │ msg  │  ·   │  ·   │  ·   │       │
-│  └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘       │
+│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐      │
+│  │ msg  │ msg  │ msg  │ msg  │ msg  │  ·   │  ·   │  ·   │      │
+│  └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘      │
 │  │◄─64 byte─►│  (each OrderMessage = 1 cache line)               │
 │                                                                  │
 │  Total: ~132 MB — fits in LLC on modern server CPUs              │
@@ -158,13 +163,13 @@ OrderMessage arrives
   ┌──────────────────────────────────────────────────────────────┐
   │ MATCH LOOP                                                   │
   │                                                              │
-  │  while qty_remaining > 0 AND opposite best exists:           │
-  │    if price does NOT cross → break                           │
-  │    fill = min(aggressor.qty, passive.qty)                    │
+  │  while qty_remaining > 0 AND opposite best exists:          │
+  │    if price does NOT cross → break                          │
+  │    fill = min(aggressor.qty, passive.qty)                   │
   │    emit Trade callback                                       │
   │    passive.qty -= fill                                       │
-  │    if passive.qty == 0 → dequeue + pool.deallocate()         │
-  │    if level.count == 0 → remove level + pool.deallocate()    │
+  │    if passive.qty == 0 → dequeue + pool.deallocate()        │
+  │    if level.count == 0 → remove level + pool.deallocate()   │
   └──────┬───────────────────────────────────────────────────────┘
          │
          ▼
@@ -314,7 +319,9 @@ orderbook/
 
 ## Build & run
 
-**Requirements:** GCC ≥ 9 or Clang ≥ 10, C++17, Linux or macOS
+**Requirements:** macOS (Apple Silicon or Intel) or Linux. No dependencies beyond the system compiler.
+
+> **macOS M1/M2/M3:** `xcode-select --install` is all you need — see [INSTALL.md](INSTALL.md) for a step-by-step guide.
 
 ```bash
 # Clone

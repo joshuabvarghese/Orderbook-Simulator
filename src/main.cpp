@@ -127,7 +127,7 @@ static void print_banner() {
     puts("  │         Low-Latency Order Book & Trade Simulator  (C++17)       │");
     puts("  │                                                                 │");
     puts("  │  Components:  MemoryPool · SPSC RingBuffer · OrderBook          │");
-    puts("  │  Compiler:    -O3 -march=native -std=c++17                      │");
+    puts("  │  Compiler:    clang++ / g++  ·  -O3 -march=native                          │");
     puts("  └─────────────────────────────────────────────────────────────────┘");
     puts("");
 }
@@ -303,7 +303,7 @@ int main(int argc, char* argv[]) {
            std::to_string(level_pool.capacity()).c_str());
     printf("  %-30s %s\n", "Level pool usage after run:",
            std::to_string(level_pool.used()).c_str());
-    printf("\n  Build: g++ -std=c++17 -O3 -march=native -funroll-loops\n\n");
+    printf("\n  Build: make   (auto-detects macOS/Linux/ARM/x86)\n\n");
 
     return 0;
 }
