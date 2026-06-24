@@ -5,11 +5,10 @@
 
 A production-style limit order book with matching engine demonstrating the core techniques used in HFT and low-latency execution systems.
 
-<!-- [![CI](https://github.com/<you>/orderbook/actions/workflows/ci.yml/badge.svg)](https://github.com/<you>/orderbook/actions)
-[![Live Demo](https://img.shields.io/badge/live%20demo-GitHub%20Pages-8b7ff5)](https://joshuabvarghese.github.io/orderbook)
+[![CI](https://github.com/<you>/orderbook/actions/workflows/ci.yml/badge.svg)](https://github.com/<you>/orderbook/actions)
+[![Live Demo](https://img.shields.io/badge/live%20demo-GitHub%20Pages-8b7ff5)](https://joshuabvarghese.github.io/Orderbook-Simulator/)
 
-> **[▶ Live interactive demo →](https://joshuabvarghese.github.io/orderbook)** -->
-> Visualises the order book, trade tape, latency histogram, and mid-price chart in real time — no install needed.
+Visualises the order book, trade tape, latency histogram, and mid-price chart in real time — no install needed.
 
 
 ---
@@ -70,13 +69,13 @@ The **42× P99.9 gap** is the real story — `std::map` has unpredictable spikes
 │   SPSCRingBuffer<OrderMessage, 1M>                                  │
 │                                                                     │
 │   Producer (feed thread)          Consumer (engine thread)          │
-│   ┌─────────────┐                 ┌─────────────┐                  │
-│   │  head_      │ ◄──cache line──►│  tail_      │                  │
-│   │  (atomic)   │   (separate!)   │  (atomic)   │                  │
-│   └─────────────┘                 └─────────────┘                  │
+│   ┌─────────────┐                 ┌─────────────┐                   │
+│   │  head_      │ ◄──cache line──►│  tail_      │                   │
+│   │  (atomic)   │   (separate!)   │  (atomic)   │                   │
+│   └─────────────┘                 └─────────────┘                   │
 │                                                                     │
 │   [ msg ][ msg ][ msg ][ msg ][ msg ][ msg ][ msg ][ msg ]...       │
-│     ↑ tail                               head ↑                    │
+│     ↑ tail                               head ↑                     │
 │     (consumer reads)                (producer writes)               │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │  pop() → OrderMessage
@@ -89,7 +88,7 @@ The **42× P99.9 gap** is the real story — `std::map` has unpredictable spikes
 │   ├── Market → add_market_order()                                   │
 │   └── Cancel → cancel_order()                                       │
 │                                                                     │
-│   Each call time-stamped → LatencyStats.record(Δt)                 │
+│   Each call time-stamped → LatencyStats.record(Δt)                  │
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
                                    ▼
@@ -174,7 +173,7 @@ OrderMessage arrives
   │    emit Trade callback                                       │
   │    passive.qty -= fill                                       │
   │    if passive.qty == 0 → dequeue + pool.deallocate()        │
-  │    if level.count == 0 → remove level + pool.deallocate()   │
+  │    if level.count == 0 → remove level + pool.deallocate()    │
   └──────┬───────────────────────────────────────────────────────┘
          │
          ▼
