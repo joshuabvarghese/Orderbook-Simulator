@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Low-Latency Order Book — Live WASM Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0c0c0e;
+      --bg-card:   #131316;
+      --bg-row:    #18181c;
+      --border:    rgba(255,255,255,0.07);
+      --border-md: rgba(255,255,255,0.13);
+      --text:      #e6e6e9;
+      --muted:     #666672;
+      --dim:       #363640;
+      --bid:       #1fcf78;
+      --ask:       #f0522a;
+      --purple:    #8b7ef8;
+      --amber:     #f0a020;
+      --cyan:      #22c4d4;
+      --mono:      'JetBrains Mono', monospace;
+      --sans:      'Inter', system-ui, sans-serif;
+      --r:         8px;
+      --rl:        12px;
+    }
+    html, body { background: var(--bg); color: var(--text); font-family: var(--sans);
+      font-size: 14px; min-height: 100vh; -webkit-font-smoothing: antialiased; }
+
+    /* ── Loading overlay ───────────────────────────────────── */
+    #loading-overlay {
+      position: fixed; inset: 0; background: var(--bg); z-index: 100;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 20px; transition: opacity 0.4s ease;
+    }
+    #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+    .loader-title { font-family: var(--mono); font-size: 15px; font-weight: 600;
+      color: var(--text); letter-spacing: 0.05em; }
+    .loader-sub { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+    .loader-bar-wrap { width: 260px; height: 3px; background: var(--border-md); border-radius: 2px; overflow: hidden; }
+    .loader-bar { height: 100%; width: 0%; background: var(--purple);
+      border-radius: 2px; transition: width 0.3s ease; }
+    .wasm-badge { font-family: var(--mono); font-size: 11px; color: var(--purple);
+      background: rgba(139,126,248,0.12); border: 1px solid rgba(139,126,248,0.25);
+      border-radius: 4px; padding: 3px 10px; }
+
+    /* ── No-WASM warning banner ────────────────────────────── */
+    #no-wasm-banner {
+      display: none; background: rgba(240,82,42,0.08); border: 1px solid rgba(240,82,42,0.25);
+      border-radius: var(--r); padding: 12px 16px; margin: 0 20px 16px;
+      font-family: var(--mono); font-size: 12px; color: var(--ask);
+    }
+    #no-wasm-banner.show { display: block; }
+
+    /* ── Page layout ────────────────────────────────────────── */
+    .page { max-width: 1140px; margin: 0 auto; padding: 24px 20px 60px; }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    .header { display: flex; justify-content: space-between; align-items: flex-start;
+      flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
+    .header-left h1 { font-family: var(--mono); font-size: 17px; font-weight: 600;
+      letter-spacing: 0.04em; margin-bottom: 4px; }
+    .header-left p  { font-size: 12px; color: var(--muted); max-width: 500px; line-height: 1.6; }
+    .badges { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+    .badge { font-family: var(--mono); font-size: 10px; font-weight: 500;
+      padding: 3px 9px; border-radius: 4px; border: 1px solid; letter-spacing: 0.04em; }
+    .b-green  { color: var(--bid);    border-color: rgba(31,207,120,0.3);  background: rgba(31,207,120,0.07);  }
+    .b-purple { color: var(--purple); border-color: rgba(139,126,248,0.3); background: rgba(139,126,248,0.07); }
+    .b-amber  { color: var(--amber);  border-color: rgba(240,160,32,0.3);  background: rgba(240,160,32,0.07);  }
+    .b-cyan   { color: var(--cyan);   border-color: rgba(34,196,212,0.3);  background: rgba(34,196,212,0.07);  }
+    .b-dim    { color: var(--muted);  border-color: var(--border-md);      background: transparent;            }
+
+    .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 4px; }
+    .ctrl-lbl { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+    input[type=range] { -webkit-appearance:none; width: 88px; height: 4px;
+      border-radius: 2px; background: var(--border-md); cursor: pointer; outline: none; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px;
+      border-radius:50%; background: var(--purple); border:2px solid var(--bg-card); cursor:pointer; }
+    .btn { font-family: var(--mono); font-size: 12px; font-weight: 500;
+      padding: 6px 14px; border-radius: var(--r); border: 1px solid var(--border-md);
+      background: var(--bg-card); color: var(--text); cursor: pointer;
+      transition: background .15s, border-color .15s; letter-spacing: 0.04em; }
+    .btn:hover   { background: var(--bg-row); border-color: rgba(255,255,255,0.22); }
+    .btn.running { border-color: var(--bid); color: var(--bid); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--bid);
+      animation: blink 1.4s infinite ease-in-out; flex-shrink:0; }
+    .dot.off { background: var(--dim); animation: none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+    /* ── Metric strip ────────────────────────────────────────── */
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(138px,1fr));
+      gap: 10px; margin-bottom: 14px; }
+    .metric { background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 12px 14px; }
+    .m-label { font-family: var(--mono); font-size: 10px; font-weight: 500;
+      color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+    .m-val   { font-family: var(--mono); font-size: 22px; font-weight: 600;
+      color: var(--text); line-height: 1; }
+    .m-val.green  { color: var(--bid);    }
+    .m-val.red    { color: var(--ask);    }
+    .m-val.purple { color: var(--purple); }
+    .m-val.cyan   { color: var(--cyan);   }
+    .m-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .m-sub.up { color: var(--bid); }
+    .m-sub.dn { color: var(--ask); }
+
+    /* ── Main two-col grid ───────────────────────────────────── */
+    .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    @media (max-width: 720px) { .main-grid { grid-template-columns: 1fr; } }
+
+    .panel { background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--rl); overflow: hidden; }
+    .ph { display: flex; justify-content: space-between; align-items: center;
+      padding: 9px 14px; border-bottom: 1px solid var(--border);
+      font-family: var(--mono); font-size: 11px; font-weight: 500;
+      color: var(--muted); letter-spacing: 0.06em; }
+    .ph span:last-child { font-weight: 400; color: var(--dim); }
+
+    /* ── Order book ──────────────────────────────────────────── */
+    .bt { width: 100%; border-collapse: collapse; }
+    .bt th { padding: 5px 12px; font-family: var(--mono); font-size: 10px;
+      font-weight: 500; color: var(--dim); text-align: right;
+      border-bottom: 1px solid var(--border); letter-spacing: 0.06em; }
+    .bt th:first-child { text-align: left; }
+    .bt td { padding: 5px 12px; font-family: var(--mono); font-size: 12px;
+      text-align: right; position: relative; }
+    .bt td:first-child { text-align: left; }
+    .bt tr { transition: background .07s; }
+    .bt tr:hover { background: rgba(255,255,255,0.025); }
+    .ar td { color: var(--ask); }
+    .br td { color: var(--bid); }
+    .db { position:absolute; top:2px; bottom:2px; right:0; border-radius:2px; opacity:.12; transition:width .12s ease; }
+    .ar .db { background: var(--ask); }
+    .br .db { background: var(--bid); }
+    .spr { background: rgba(255,255,255,0.018); border-top:1px solid var(--border);
+      border-bottom:1px solid var(--border); }
+    .spr td { padding:3px 12px; font-family:var(--mono); font-size:10px;
+      color:var(--dim); text-align:center; }
+
+    /* ── Pool meter ──────────────────────────────────────────── */
+    .pool-bar-wrap { height: 3px; background: var(--border-md); margin: 0; }
+    .pool-bar { height: 100%; background: var(--cyan); transition: width .3s; width:0%; }
+    .info-chips { display:flex; gap:6px; flex-wrap:wrap; padding:8px 12px; }
+    .chip { font-family:var(--mono); font-size:10px; color:var(--purple);
+      background:rgba(139,126,248,0.1); border-radius:3px; padding:2px 8px; letter-spacing:0.04em; }
+
+    /* ── Trade tape ──────────────────────────────────────────── */
+    .tape { max-height: 248px; overflow-y: auto; }
+    .tape::-webkit-scrollbar { width: 3px; }
+    .tape::-webkit-scrollbar-thumb { background: var(--border-md); border-radius:2px; }
+    .tr-row { display:flex; justify-content:space-between; align-items:center;
+      padding:5px 14px; border-bottom:1px solid var(--border);
+      font-family:var(--mono); font-size:12px;
+      animation: pop .18s ease; }
+    @keyframes pop { from{opacity:0;transform:translateX(-5px)} to{opacity:1;transform:none} }
+    .tr-side { font-size:10px; font-weight:600; padding:1px 6px; border-radius:3px;
+      letter-spacing:0.05em; }
+    .tr-buy  { background:rgba(31,207,120,0.12); color:var(--bid); }
+    .tr-sell { background:rgba(240,82,42,0.12);  color:var(--ask); }
+    .tr-px   { font-weight:600; color:var(--text); min-width:64px; text-align:right; }
+    .tr-qty  { color:var(--muted); min-width:52px; text-align:right; }
+    .tr-t    { font-size:10px; color:var(--dim); min-width:62px; text-align:right; }
+
+    /* ── Bottom row ──────────────────────────────────────────── */
+    .bot-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+    @media (max-width: 720px) { .bot-row { grid-template-columns:1fr; } }
+
+    /* ── Latency ─────────────────────────────────────────────── */
+    .lat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--border); }
+    .lat-cell { background:var(--bg-card); padding:14px 0; text-align:center; }
+    .lat-p    { font-family:var(--mono); font-size:10px; color:var(--muted); letter-spacing:.06em; margin-bottom:6px; }
+    .lat-v    { font-family:var(--mono); font-size:20px; font-weight:600; color:var(--text); }
+    .lat-u    { font-family:var(--mono); font-size:10px; color:var(--dim); margin-top:2px; }
+    .lat-v.warn { color:var(--amber); }
+    .lat-v.bad  { color:var(--ask);   }
+
+    .spark-wrap { padding:12px 14px; border-top:1px solid var(--border); }
+    .spark-lbl  { font-family:var(--mono); font-size:10px; color:var(--dim);
+      margin-bottom:8px; letter-spacing:.04em; }
+    .spark-row  { display:flex; align-items:flex-end; gap:2px; height:44px; }
+    .sb { flex:1; border-radius:2px 2px 0 0; background:var(--purple); opacity:.6;
+      min-height:2px; transition:height .1s ease; }
+
+    /* ── Charts ──────────────────────────────────────────────── */
+    .chart-wrap { padding:12px 14px; }
+    .chart-lbl  { font-family:var(--mono); font-size:10px; color:var(--dim);
+      margin-bottom:8px; letter-spacing:.04em; }
+    .c-box { height:88px; position:relative; }
+    canvas { display:block; }
+
+    /* ── Real badge ──────────────────────────────────────────── */
+    .real-badge {
+      display:inline-flex; align-items:center; gap:5px;
+      font-family:var(--mono); font-size:10px; font-weight:600;
+      color:var(--cyan); letter-spacing:0.06em;
+      background:rgba(34,196,212,0.1); border:1px solid rgba(34,196,212,0.25);
+      border-radius:4px; padding:3px 9px;
+    }
+    .real-dot { width:5px; height:5px; border-radius:50%; background:var(--cyan);
+      animation:blink 1.4s infinite ease-in-out; }
+
+    /* ── Footer ──────────────────────────────────────────────── */
+    .footer { margin-top:40px; padding-top:20px; border-top:1px solid var(--border);
+      display:flex; justify-content:space-between; align-items:center;
+      flex-wrap:wrap; gap:12px; }
+    .footer p { font-family:var(--mono); font-size:11px; color:var(--muted); }
+    .footer a { font-family:var(--mono); font-size:11px; color:var(--muted);
+      text-decoration:none; margin-left:14px; transition:color .15s; }
+    .footer a:hover { color:var(--text); }
+  </style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <div class="wasm-badge">⚙ LOADING WASM ENGINE</div>
+  <div class="loader-title">Initialising C++ Order Book</div>
+  <div class="loader-bar-wrap"><div class="loader-bar" id="loader-bar"></div></div>
+  <div class="loader-sub" id="loader-msg">Fetching orderbook.wasm...</div>
+</div>
+
+<div class="page">
+
+  <div id="no-wasm-banner">
+    ⚠ orderbook.wasm not found — run <code>bash wasm/build.sh</code> first,
+    then serve with <code>python3 -m http.server 8080</code> and open
+    <a href="http://localhost:8080" style="color:var(--ask)">localhost:8080</a>.
+    Showing simulated fallback data.
+  </div>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <h1>ORDER BOOK SIMULATOR</h1>
+      <p>Real C++ matching engine compiled to WebAssembly — lock-free memory pool, SPSC ring buffer, price-time priority matching. Every order, cancel, and trade you see passes through the actual compiled C++ code.</p>
+      <div class="badges">
+        <span class="badge b-cyan" id="engine-badge">◌ loading wasm...</span>
+        <span class="badge b-green">p99 &lt; 500 ns</span>
+        <span class="badge b-purple">5 M msg/s</span>
+        <span class="badge b-amber">zero heap allocs</span>
+        <span class="badge b-dim">C++17 → WASM</span>
+      </div>
+    </div>
+    <div class="controls">
+      <span class="ctrl-lbl">SPEED</span>
+      <input type="range" id="speed" min="1" max="10" value="5" />
+      <span class="ctrl-lbl" id="spd-val">5</span>
+      <button class="btn running" id="toggle-btn">⏸ PAUSE</button>
+      <div class="dot" id="dot"></div>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="metric">
+      <div class="m-label">MID PRICE</div>
+      <div class="m-val" id="m-mid">$100.00</div>
+      <div class="m-sub" id="m-mid-sub">—</div>
+    </div>
+    <div class="metric">
+      <div class="m-label">MSG PROCESSED</div>
+      <div class="m-val purple" id="m-total">0</div>
+      <div class="m-sub" id="m-mps">0 / s</div>
+    </div>
+    <div class="metric">
+      <div class="m-label">TRADES EXECUTED</div>
+      <div class="m-val green" id="m-trades">0</div>
+      <div class="m-sub" id="m-tps">0 / s</div>
+    </div>
+    <div class="metric">
+      <div class="m-label">SPREAD</div>
+      <div class="m-val red" id="m-spread">—</div>
+      <div class="m-sub">ticks</div>
+    </div>
+    <div class="metric">
+      <div class="m-label">POOL USAGE</div>
+      <div class="m-val cyan" id="m-pool">0%</div>
+      <div class="m-sub" id="m-pool-sub">orders in flight</div>
+    </div>
+  </div>
+
+  <!-- Book + Tape -->
+  <div class="main-grid">
+    <div class="panel">
+      <div class="ph">
+        <span>LIMIT ORDER BOOK</span>
+        <div class="real-badge" id="real-badge" style="display:none">
+          <div class="real-dot"></div>REAL C++ ENGINE
+        </div>
+        <span id="book-sub">loading...</span>
+      </div>
+      <table class="bt">
+        <thead>
+          <tr><th>QTY</th><th>PRICE</th><th style="min-width:88px;">DEPTH</th></tr>
+        </thead>
+        <tbody id="ask-rows"></tbody>
+        <tbody>
+          <tr class="spr"><td colspan="3" id="spr-cell">spread: —</td></tr>
+        </tbody>
+        <tbody id="bid-rows"></tbody>
+      </table>
+      <div class="pool-bar-wrap"><div class="pool-bar" id="pool-bar"></div></div>
+      <div class="info-chips">
+        <span class="chip">LOCK-FREE POOL</span>
+        <span class="chip">SPSC RING BUFFER</span>
+        <span class="chip">INTRUSIVE LIST</span>
+        <span class="chip">PRICE-TIME PRIORITY</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph">
+        <span>TRADE TAPE</span>
+        <span id="tape-sub">0 executions</span>
+      </div>
+      <div class="tape" id="tape"></div>
+    </div>
+  </div>
+
+  <!-- Latency + Charts -->
+  <div class="bot-row">
+    <div class="panel">
+      <div class="ph">
+        <span>LATENCY PERCENTILES</span>
+        <span id="lat-sub">0 samples</span>
+      </div>
+      <div class="lat-grid">
+        <div class="lat-cell"><div class="lat-p">P50</div><div class="lat-v" id="lp50">—</div><div class="lat-u">ns</div></div>
+        <div class="lat-cell"><div class="lat-p">P90</div><div class="lat-v" id="lp90">—</div><div class="lat-u">ns</div></div>
+        <div class="lat-cell"><div class="lat-p">P99</div><div class="lat-v" id="lp99">—</div><div class="lat-u">ns</div></div>
+        <div class="lat-cell"><div class="lat-p">P99.9</div><div class="lat-v" id="lp999">—</div><div class="lat-u">ns</div></div>
+      </div>
+      <div class="spark-wrap">
+        <div class="spark-lbl">LATENCY DISTRIBUTION — rolling window</div>
+        <div class="spark-row" id="spark"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><span>MID PRICE HISTORY</span><span id="price-range-sub">—</span></div>
+      <div class="chart-wrap">
+        <div class="c-box"><canvas id="cv-price"></canvas></div>
+      </div>
+      <div class="ph" style="border-top:1px solid var(--border);border-bottom:none;">
+        <span>THROUGHPUT  (msg / s)</span><span></span>
+      </div>
+      <div class="chart-wrap">
+        <div class="c-box"><canvas id="cv-tput"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>low-latency-orderbook · C++17 → WebAssembly · MIT</p>
+    <div>
+      <a href="https://github.com/YOUR_USERNAME/orderbook" target="_blank">github ↗</a>
+      <a href="../README.md" target="_blank">readme ↗</a>
+      <a href="../INSTALL.md" target="_blank">install ↗</a>
+    </div>
+  </div>
+</div><!-- /page -->
+
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════════════════════ */
+let OB       = null;   // WASM module — null until loaded
+let wasmReal = false;  // true once real engine is running
+
+let running     = true;
+let totalMsgs   = 0, totalTrades = 0;
+let prevMid     = 0,  lastMid    = 0;
+let secMsgs     = 0,  secTrades  = 0;
+let mps = 0, tps = 0;
+
+const tradeLog   = [];
+const priceHist  = [];
+const tputHist   = [];
+const latBuckets = new Array(40).fill(0);
+let   latCount   = 0;
+
+const MAX_HIST = 130;
+
+/* ═══════════════════════════════════════════════════════════════════
+   WASM LOADER
+═══════════════════════════════════════════════════════════════════ */
+function setLoaderMsg(msg, pct) {
+  document.getElementById('loader-msg').textContent = msg;
+  document.getElementById('loader-bar').style.width = pct + '%';
+}
+
+async function loadWasm() {
+  setLoaderMsg('Fetching orderbook.wasm...', 10);
+
+  // Check if the .wasm file actually exists
+  let wasmExists = false;
+  try {
+    const probe = await fetch('orderbook.wasm', { method: 'HEAD' });
+    wasmExists   = probe.ok;
+  } catch (_) { wasmExists = false; }
+
+  if (!wasmExists) {
+    // No WASM — show banner, use JS fallback
+    document.getElementById('no-wasm-banner').classList.add('show');
+    document.getElementById('engine-badge').textContent = '⚠ JS SIMULATION';
+    document.getElementById('engine-badge').style.color = 'var(--amber)';
+    hideLoader();
+    startFallback();
+    return;
+  }
+
+  try {
+    setLoaderMsg('Loading Emscripten module...', 30);
+    // Dynamically load the generated JS glue
+    await new Promise((res, rej) => {
+      const s  = document.createElement('script');
+      s.src    = 'orderbook.js';
+      s.onload = res;
+      s.onerror= rej;
+      document.head.appendChild(s);
+    });
+
+    setLoaderMsg('Instantiating WebAssembly...', 55);
+    OB = await OrderBookModule();   // the Emscripten Modularize export
+
+    setLoaderMsg('Initialising order book...', 80);
+    OB._ob_init(42);
+
+    wasmReal = true;
+    document.getElementById('engine-badge').textContent = '● REAL C++ ENGINE';
+    document.getElementById('engine-badge').style.color = 'var(--cyan)';
+    document.getElementById('real-badge').style.display = 'inline-flex';
+    document.getElementById('book-sub').textContent = '5 levels · C++ matching';
+
+    setLoaderMsg('Ready.', 100);
+    setTimeout(hideLoader, 400);
+    startWasmLoop();
+
+  } catch (err) {
+    console.error('WASM load failed:', err);
+    document.getElementById('engine-badge').textContent = '⚠ JS SIMULATION';
+    hideLoader();
+    startFallback();
+  }
+}
+
+function hideLoader() {
+  const ol = document.getElementById('loading-overlay');
+  ol.classList.add('hidden');
+  setTimeout(() => ol.remove(), 500);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   WASM LOOP — real C++ engine
+═══════════════════════════════════════════════════════════════════ */
+function startWasmLoop() {
+  setInterval(() => {
+    if (!running || !OB) return;
+
+    const spd   = parseInt(document.getElementById('speed').value, 10);
+    const steps = Math.max(10, spd * 25);
+
+    const processed = OB._ob_step(steps);
+
+    // Read totals from WASM memory
+    // Note: ob_total_msgs returns uint64 — use Number() for values < 2^53
+    totalMsgs   = Number(OB._ob_total_msgs());
+    totalTrades = Number(OB._ob_total_trades());
+    secMsgs    += processed;
+    secTrades  += (tradeLog.length > 0 ? 0 : 0); // counted in trade buf below
+
+    // Read new trades from this batch
+    const tc = OB._ob_trade_count_buf();
+    for (let i = 0; i < tc; i++) {
+      const price = OB._ob_trade_price(i);
+      const qty   = OB._ob_trade_qty(i);
+      const side  = OB._ob_trade_side(i) === 0 ? 'buy' : 'sell';
+      const now   = new Date().toTimeString().slice(0, 8);
+      tradeLog.unshift({ price, qty, side, time: now });
+    }
+    if (tradeLog.length > 60) tradeLog.length = 60;
+
+    // Read book state
+    const bb = OB._ob_best_bid();
+    const ba = OB._ob_best_ask();
+    lastMid  = Math.round((bb + ba) / 2);
+
+    priceHist.push(lastMid);
+    if (priceHist.length > MAX_HIST) priceHist.shift();
+
+    // Latency — update rolling histogram
+    const p99 = Number(OB._ob_p99_ns());
+    updateLatBuckets(p99);
+
+    render();
+  }, 50);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   JS FALLBACK SIMULATION
+   (identical logic to before — used when WASM not built yet)
+═══════════════════════════════════════════════════════════════════ */
+let fb_mid = 10000;
+const fb_bids = new Map(), fb_asks = new Map(), fb_ords = new Map();
+let fb_oid = 1;
+
+function fb_add(price, side, qty) {
+  const m = side === 'bid' ? fb_bids : fb_asks;
+  m.set(price, (m.get(price) || 0) + qty);
+  fb_ords.set(++fb_oid, { price, side, qty });
+}
+function fb_cancel() {
+  if (!fb_ords.size) return;
+  const keys = [...fb_ords.keys()];
+  const id   = keys[Math.floor(Math.random() * keys.length)];
+  const o    = fb_ords.get(id); if (!o) return;
+  const m    = o.side === 'bid' ? fb_bids : fb_asks;
+  const cur  = m.get(o.price) || 0;
+  if (cur <= o.qty) m.delete(o.price); else m.set(o.price, cur - o.qty);
+  fb_ords.delete(id);
+}
+function fb_match() {
+  const bb = fb_bids.size ? Math.max(...fb_bids.keys()) : -1;
+  const ba = fb_asks.size ? Math.min(...fb_asks.keys()) :  Infinity;
+  if (bb < ba || bb < 0) return;
+  const bq = fb_bids.get(bb) || 0, aq = fb_asks.get(ba) || 0;
+  const fill = Math.min(bq, aq); if (!fill) return;
+  if (bq <= fill) fb_bids.delete(bb); else fb_bids.set(bb, bq - fill);
+  if (aq <= fill) fb_asks.delete(ba); else fb_asks.set(ba, aq - fill);
+  totalTrades++; secTrades++;
+  tradeLog.unshift({ price: ba, qty: fill,
+    side: Math.random() > 0.5 ? 'buy' : 'sell',
+    time: new Date().toTimeString().slice(0, 8) });
+  if (tradeLog.length > 60) tradeLog.length = 60;
+}
+function fb_step() {
+  if (Math.random() < 0.025) fb_mid += Math.random() > 0.5 ? 1 : -1;
+  if (fb_mid < 100) fb_mid = 100;
+  const r = Math.random();
+  if (r < 0.70) {
+    const side   = Math.random() > 0.5 ? 'bid' : 'ask';
+    const offset = Math.floor(Math.random() * 10) + 1;
+    fb_add(side === 'bid' ? fb_mid - offset : fb_mid + offset, side,
+           Math.floor(Math.random() * 500) + 1);
+  } else if (r < 0.90) { fb_cancel(); }
+  else {
+    const m = Math.random() > 0.5 ? fb_bids : fb_asks;
+    if (m.size) {
+      const best = m === fb_bids ? Math.max(...m.keys()) : Math.min(...m.keys());
+      m.delete(best);
+    }
+  }
+  fb_match();
+  totalMsgs++; secMsgs++;
+  const ns = Math.max(30, Math.random() * 600);
+  updateLatBuckets(ns);
+  lastMid = fb_mid;
+  priceHist.push(fb_mid);
+  if (priceHist.length > MAX_HIST) priceHist.shift();
+}
+
+function startFallback() {
+  for (let i = 1; i <= 25; i++) {
+    fb_add(fb_mid - i, 'bid', Math.floor(Math.random() * 800) + 100);
+    fb_add(fb_mid + i, 'ask', Math.floor(Math.random() * 800) + 100);
+  }
+  setInterval(() => {
+    if (!running) return;
+    const spd   = parseInt(document.getElementById('speed').value, 10);
+    const steps = Math.max(1, Math.round(spd * 1.5));
+    for (let i = 0; i < steps; i++) fb_step();
+    render();
+  }, 50);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   LATENCY HISTOGRAM
+═══════════════════════════════════════════════════════════════════ */
+function updateLatBuckets(ns) {
+  latCount++;
+  // Bucket: 0-2000 ns spread over 40 bins
+  const b = Math.min(39, Math.floor(ns / 50));
+  latBuckets[b]++;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MPS / TPS COUNTER
+═══════════════════════════════════════════════════════════════════ */
+setInterval(() => {
+  mps = secMsgs; tps = secTrades;
+  tputHist.push(mps);
+  if (tputHist.length > MAX_HIST) tputHist.shift();
+  secMsgs = 0; secTrades = 0;
+}, 1000);
+
+/* ═══════════════════════════════════════════════════════════════════
+   RENDER
+═══════════════════════════════════════════════════════════════════ */
+function px(ticks) { return '$' + (ticks / 100).toFixed(2); }
+
+function renderBook() {
+  let bb, ba, bids_data, asks_data;
+
+  if (wasmReal && OB) {
+    bb = OB._ob_best_bid();
+    ba = OB._ob_best_ask();
+    bids_data = [];
+    asks_data = [];
+    const bc = OB._ob_bid_count();
+    const ac = OB._ob_ask_count();
+    for (let i = 0; i < bc; i++)
+      bids_data.push([OB._ob_bid_price(i), OB._ob_bid_qty(i)]);
+    for (let i = 0; i < ac; i++)
+      asks_data.push([OB._ob_ask_price(i), OB._ob_ask_qty(i)]);
+  } else {
+    bb = fb_bids.size ? Math.max(...fb_bids.keys()) : 0;
+    ba = fb_asks.size ? Math.min(...fb_asks.keys()) : 0;
+    bids_data = [...fb_bids.entries()].sort((a,b)=>b[0]-a[0]).slice(0,5);
+    asks_data = [...fb_asks.entries()].sort((a,b)=>a[0]-b[0]).slice(0,5).reverse();
+  }
+
+  const maxQ = Math.max(1,
+    ...bids_data.map(e=>e[1]), ...asks_data.map(e=>e[1]));
+
+  document.getElementById('ask-rows').innerHTML = asks_data.map(([p,q]) => {
+    const w = Math.round(q / maxQ * 100);
+    return `<tr class="ar"><td>${q.toLocaleString()}</td><td>${px(p)}</td>
+      <td style="position:relative;padding-right:10px;"><div class="db" style="width:${w}%"></div></td></tr>`;
+  }).join('');
+
+  document.getElementById('bid-rows').innerHTML = bids_data.map(([p,q]) => {
+    const w = Math.round(q / maxQ * 100);
+    return `<tr class="br"><td>${q.toLocaleString()}</td><td>${px(p)}</td>
+      <td style="position:relative;padding-right:10px;"><div class="db" style="width:${w}%"></div></td></tr>`;
+  }).join('');
+
+  const sp = (bb && ba) ? ba - bb : null;
+  document.getElementById('spr-cell').textContent =
+    sp !== null ? `spread  ${sp} ticks  (${px(sp)})` : 'spread: —';
+  document.getElementById('m-spread').textContent = sp !== null ? sp : '—';
+
+  // Pool meter (only available from WASM)
+  if (wasmReal && OB) {
+    const used = Number(OB._ob_pool_used());
+    const cap  = Number(OB._ob_pool_cap());
+    const pct  = cap > 0 ? (used / cap * 100).toFixed(1) : 0;
+    document.getElementById('pool-bar').style.width = pct + '%';
+    document.getElementById('m-pool').textContent   = pct + '%';
+    document.getElementById('m-pool-sub').textContent = used.toLocaleString() + ' orders in flight';
+  }
+}
+
+function renderTape() {
+  document.getElementById('tape').innerHTML = tradeLog.slice(0, 22).map(t =>
+    `<div class="tr-row">
+      <span class="tr-side tr-${t.side}">${t.side.toUpperCase()}</span>
+      <span class="tr-px">${px(t.price)}</span>
+      <span class="tr-qty">${t.qty.toLocaleString()}</span>
+      <span class="tr-t">${t.time}</span>
+    </div>`
+  ).join('');
+  document.getElementById('tape-sub').textContent = totalTrades.toLocaleString() + ' executions';
+}
+
+function renderLatency() {
+  // Pull real values from WASM if available
+  let p50, p90, p99, p999;
+  if (wasmReal && OB && Number(OB._ob_total_msgs()) > 100) {
+    p50  = Number(OB._ob_p50_ns());
+    p90  = Number(OB._ob_p90_ns());
+    p99  = Number(OB._ob_p99_ns());
+    p999 = Number(OB._ob_p999_ns());
+  } else {
+    // Simple running estimate from buckets
+    const total = latBuckets.reduce((a,b) => a+b, 0);
+    const pv = (pct) => {
+      if (!total) return 0;
+      let cum = 0, target = Math.ceil(total * pct / 100);
+      for (let i = 0; i < 40; i++) {
+        cum += latBuckets[i];
+        if (cum >= target) return (i + 0.5) * 50;
+      }
+      return 2000;
+    };
+    p50 = pv(50); p90 = pv(90); p99 = pv(99); p999 = pv(99.9);
+  }
+
+  const fmt = (v, id) => {
+    const el = document.getElementById(id);
+    el.textContent = Math.round(v);
+    el.className = 'lat-v' + (v > 2000 ? ' bad' : v > 800 ? ' warn' : '');
+  };
+  fmt(p50,'lp50'); fmt(p90,'lp90'); fmt(p99,'lp99'); fmt(p999,'lp999');
+  document.getElementById('lat-sub').textContent = totalMsgs.toLocaleString() + ' samples';
+
+  const maxB = Math.max(1, ...latBuckets);
+  document.getElementById('spark').innerHTML = latBuckets.map(b => {
+    const h = Math.max(2, Math.round(b / maxB * 42));
+    return `<div class="sb" style="height:${h}px"></div>`;
+  }).join('');
+}
+
+function drawCanvas(id, data, color, labelFn) {
+  const canvas = document.getElementById(id);
+  if (!canvas || !data.length) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w   = canvas.parentElement.offsetWidth || 400;
+  const h   = 88;
+  canvas.style.width  = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.width  = w * dpr;
+  canvas.height = h * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  if (data.length < 2) return;
+
+  const mn = Math.min(...data), mx = Math.max(...data);
+  const rng = mx - mn || 1;
+  const pad = 6;
+  const toX = i => (i / (data.length - 1)) * w;
+  const toY = v => h - pad - ((v - mn) / rng) * (h - pad * 2);
+
+  ctx.beginPath();
+  data.forEach((v, i) => i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)));
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+  ctx.fillStyle = color + '14'; ctx.fill();
+
+  if (labelFn) {
+    ctx.font = '10px JetBrains Mono, monospace';
+    ctx.fillStyle = color; ctx.textAlign = 'right';
+    ctx.fillText(labelFn(data[data.length - 1]), w - 4, 14);
+  }
+}
+
+function renderMetrics() {
+  document.getElementById('m-mid').textContent    = px(lastMid || 10000);
+  document.getElementById('m-total').textContent  = totalMsgs.toLocaleString();
+  document.getElementById('m-mps').textContent    = mps.toLocaleString() + ' / s';
+  document.getElementById('m-trades').textContent = totalTrades.toLocaleString();
+  document.getElementById('m-tps').textContent    = tps + ' / s';
+
+  const delta = lastMid - prevMid;
+  const sub   = document.getElementById('m-mid-sub');
+  if      (delta > 0) { sub.textContent = '+' + delta + ' ticks'; sub.className = 'm-sub up'; }
+  else if (delta < 0) { sub.textContent =       delta + ' ticks'; sub.className = 'm-sub dn'; }
+  else                { sub.textContent = 'unchanged';             sub.className = 'm-sub';    }
+  prevMid = lastMid;
+
+  const hi = priceHist.length ? Math.max(...priceHist) : 0;
+  const lo = priceHist.length ? Math.min(...priceHist) : 0;
+  document.getElementById('price-range-sub').textContent =
+    priceHist.length ? px(lo) + ' – ' + px(hi) : '—';
+}
+
+function render() {
+  renderBook();
+  renderTape();
+  renderLatency();
+  renderMetrics();
+  drawCanvas('cv-price', priceHist, '#8b7ef8', v => px(v));
+  drawCanvas('cv-tput',  tputHist,  '#1fcf78', v => Math.round(v).toLocaleString() + ' msg/s');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CONTROLS
+═══════════════════════════════════════════════════════════════════ */
+document.getElementById('speed').addEventListener('input', function () {
+  document.getElementById('spd-val').textContent = this.value;
+});
+document.getElementById('toggle-btn').addEventListener('click', function () {
+  running = !running;
+  this.textContent  = running ? '⏸ PAUSE' : '▶ RESUME';
+  this.classList.toggle('running', running);
+  document.getElementById('dot').className = 'dot' + (running ? '' : ' off');
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   BOOT
+═══════════════════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', loadWasm);
+</script>
+</body>
+</html>

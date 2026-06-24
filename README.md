@@ -5,7 +5,12 @@
 
 A production-style limit order book with matching engine demonstrating the core techniques used in HFT and low-latency execution systems.
 
-[![CI](https://github.com/<you>/orderbook/actions/workflows/ci.yml/badge.svg)](https://github.com/<you>/orderbook/actions)
+<!-- [![CI](https://github.com/<you>/orderbook/actions/workflows/ci.yml/badge.svg)](https://github.com/<you>/orderbook/actions)
+[![Live Demo](https://img.shields.io/badge/live%20demo-GitHub%20Pages-8b7ff5)](https://joshuabvarghese.github.io/orderbook)
+
+> **[▶ Live interactive demo →](https://joshuabvarghese.github.io/orderbook)** -->
+> Visualises the order book, trade tape, latency histogram, and mid-price chart in real time — no install needed.
+
 
 ---
 
